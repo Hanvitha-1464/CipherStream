@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Frame Processor</title>
+    <style src="./style.css"></style>
+</head>
+
+<body>
+    <h1>Video Frame Processing Pipeline</h1>
+
+    <div class="container">
+        <div class="video-section">
+            <div class="video-container">
+                <video id="videoInput" autoplay muted playsinline></video>
+                <canvas id="canvasOutput"></canvas>
+            </div>
+
+            <div class="controls">
+                <button id="startBtn">▶ Start Processing</button>
+                <button id="stopBtn">⏹ Stop Processing</button>
+                <select id="effectSelect">
+                    <option value="none">No Effect</option>
+                    <option value="grayscale">Grayscale</option>
+                    <option value="invert">Invert Colors</option>
+                    <option value="edge">Edge Detection</option>
+                    <option value="sepia">Sepia</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="stats-section">
+            <h2>Performance Metrics</h2>
+            <div class="stat-item">
+                <strong>FPS:</strong> <span id="fpsCounter">0</span>
+            </div>
+            <div class="stat-item">
+                <strong>Processing Time:</strong> <span id="processTime">0 ms</span>
+            </div>
+            <div class="stat-item">
+                <strong>Dropped Frames:</strong> <span id="droppedFrames">0</span>
+            </div>
+            <div class="stat-item">
+                <strong>Buffer Size:</strong> <span id="bufferSize">0</span>
+            </div>
+            <div class="stat-item">
+                <strong>Total Frames:</strong> <span id="totalFrames">0</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="processor.js"></script>
+</body>
+
+</html>
