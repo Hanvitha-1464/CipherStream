@@ -134,7 +134,12 @@ export class PacketProcessor {
       throw new Error("Packet too short");
     }
 
-    const view = new DataView(packet.buffer);
+    // CRITICAL FIX: Create DataView with proper offset and length
+    const view = new DataView(
+      packet.buffer,
+      packet.byteOffset,
+      packet.byteLength,
+    );
     const packetTypeValue = view.getUint16(0, true);
 
     // Validate packet type
@@ -194,7 +199,8 @@ export class PacketProcessor {
       crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
     }
 
-    return crc ^ 0xffffffff;
+    // CRITICAL FIX: Use >>> 0 to convert to unsigned 32-bit integer
+    return (crc ^ 0xffffffff) >>> 0;
   }
 
   static splitFileIntoPackets(

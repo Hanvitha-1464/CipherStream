@@ -2,22 +2,21 @@
 import type { AppState, PacketStatus, TransferStats } from "../types";
 import { WebRTCManager } from "./WebRTCManager";
 import { PacketProcessor } from "./PacketProcessor";
-import { DCTSteganography } from "./DCTSteganography";
 
-/* Callback types */
 type StatsUpdateCallback = (stats: TransferStats) => void;
 type StatusUpdateCallback = (status: PacketStatus[]) => void;
 type StateUpdateCallback = (state: AppState) => void;
 type ResultUpdateCallback = (result: string) => void;
 
 export class SenderModule {
-  /* callbacks (must be explicit fields) */
   private onStatsUpdate: StatsUpdateCallback;
   private onStatusUpdate: StatusUpdateCallback;
   private onStateUpdate: StateUpdateCallback;
   private onResultUpdate: ResultUpdateCallback;
   private onFileClear: () => void;
   private onFileSet: (name: string, size: number) => void;
+
+  private signalingChannel: BroadcastChannel;
 
   private file: File | null = null;
   private fileData: Uint8Array | null = null;
@@ -32,15 +31,11 @@ export class SenderModule {
   private webrtc: WebRTCManager;
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-
   private animationId: number | null = null;
-  private isRunning = false;
 
-  private framesSinceLastPacket = 0;
-  private currentFragmentIndex = 0;
-  private fragmentsPerPacket = 4;
   private waitingForAck = false;
   private ackTimeout: number | null = null;
+  private transferStartTime: number = 0;
 
   constructor(
     onStatsUpdate: StatsUpdateCallback,
@@ -57,8 +52,12 @@ export class SenderModule {
     this.onFileClear = onFileClear;
     this.onFileSet = onFileSet;
 
+    this.signalingChannel = new BroadcastChannel("cipherstream_signaling");
+    this.signalingChannel.onmessage = this.handleSignalingMessage.bind(this);
+
     this.webrtc = new WebRTCManager("sender");
 
+    // Create status canvas for video stream
     this.canvas = document.createElement("canvas");
     this.canvas.width = 320;
     this.canvas.height = 240;
@@ -67,14 +66,48 @@ export class SenderModule {
     if (!ctx) throw new Error("Failed to get canvas context");
     this.ctx = ctx;
 
+    this.webrtc.setIceCandidateHandler((candidate) => {
+      this.signalingChannel.postMessage({
+        type: "candidate",
+        data: candidate.toJSON(),
+      });
+    });
+
     this.webrtc.setConnectionStateHandler((state) => {
       if (state === "connected") {
         this.onStateUpdate("connected");
-        this.startSending();
       }
     });
 
-    this.webrtc.setDataChannelMessageHandler(this.handleAckMessage.bind(this));
+    this.webrtc.setDataChannelOpenHandler(() => {
+      console.log("✅ Data channel ready, starting transfer");
+      this.startSending();
+    });
+
+    this.webrtc.setRemoteStreamHandler((stream: MediaStream) => {
+      console.log("📺 Sender: Remote stream received from receiver");
+      const remoteVideoElement = document.getElementById(
+        "remoteVideo",
+      ) as HTMLVideoElement;
+      if (remoteVideoElement) {
+        remoteVideoElement.srcObject = stream;
+        // Force play
+        remoteVideoElement
+          .play()
+          .then(() => {
+            console.log("✅ Sender: Remote video playing");
+          })
+          .catch((err) => {
+            console.warn("⚠️ Sender: Remote video play failed:", err);
+          });
+      } else {
+        console.error("❌ Sender: Remote video element not found!");
+      }
+    });
+
+    this.webrtc.setDataChannelMessageHandler(
+      this.handleDataChannelMessage.bind(this),
+    );
   }
 
   setFile(file: File): void {
@@ -139,73 +172,173 @@ export class SenderModule {
       return;
     }
 
-    this.onStateUpdate("signaling");
+    try {
+      console.log("📤 Sender: Starting transfer");
+      this.onStateUpdate("signaling");
 
-    await this.webrtc.initialize();
-    const offer = await this.webrtc.createOffer();
+      // Draw status on canvas
+      this.updateStatusCanvas("Initializing...");
+      const stream = this.canvas.captureStream(1);
 
-    const receiver = window.open(window.location.href);
-    if (!receiver) {
-      this.onResultUpdate("ERROR: Popups blocked");
-      return;
+      console.log("📹 Sender: Canvas stream created");
+      console.log(
+        "   Tracks:",
+        stream.getTracks().map((t) => `${t.kind}:${t.id}`),
+      );
+
+      // Display local stream
+      const localVideo = document.getElementById(
+        "localVideo",
+      ) as HTMLVideoElement;
+      if (localVideo) {
+        localVideo.srcObject = stream;
+        localVideo.muted = true; // Important for local video
+        localVideo
+          .play()
+          .then(() => {
+            console.log("✅ Sender: Local video playing");
+          })
+          .catch((err) => {
+            console.warn("⚠️ Sender: Local video play failed:", err);
+          });
+      } else {
+        console.error("❌ Sender: Local video element not found!");
+      }
+
+      // Initialize WebRTC
+      await this.webrtc.initialize();
+      this.webrtc.setLocalStream(stream);
+
+      // Create and send offer
+      const offer = await this.webrtc.createOffer();
+      this.signalingChannel.postMessage({ type: "offer", data: offer });
+
+      console.log("✅ Sender: Offer sent, waiting for answer");
+      this.updateStatusCanvas("Waiting for receiver...");
+
+      // Start canvas animation
+      this.startStatusAnimation();
+    } catch (error) {
+      console.error("❌ Sender: Error during start:", error);
+      this.onStateUpdate("error");
+      this.onResultUpdate(
+        `ERROR: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
     }
-
-    setTimeout(() => {
-      receiver.postMessage({ type: "offer", data: offer }, "*");
-    }, 1000);
-
-    window.addEventListener("message", this.handleSignalingMessage.bind(this));
   }
 
   private handleSignalingMessage(event: MessageEvent): void {
     if (event.data?.type === "answer") {
+      console.log("📨 Sender: Received answer from receiver");
       this.webrtc.receiveAnswer(event.data.data);
+      this.updateStatusCanvas("Connected!");
+    } else if (event.data?.type === "candidate") {
+      console.log("🧊 Sender: Received ICE candidate");
+      this.webrtc.addIceCandidate(event.data.data);
     }
   }
 
-  private handleAckMessage(data: string): void {
-    const msg = JSON.parse(data);
-    if (msg.type !== "ack") return;
+  private handleDataChannelMessage(data: ArrayBuffer | string): void {
+    try {
+      const msg = JSON.parse(data as string);
 
-    const seq = msg.sequenceNumber;
-    if (!this.packetStatus[seq]) return;
+      if (msg.type === "ack") {
+        this.handleAck(msg.sequenceNumber);
+      } else if (msg.type === "nack") {
+        this.handleNack(msg.sequenceNumber);
+      }
+    } catch (error) {
+      console.error("❌ Sender: Error handling message:", error);
+    }
+  }
 
+  private handleAck(sequence: number): void {
+    if (!this.packetStatus[sequence]) {
+      console.warn(`⚠️ Sender: Invalid sequence number ${sequence}`);
+      return;
+    }
+
+    console.log(`✅ Sender: ACK received for packet ${sequence}`);
     clearTimeout(this.ackTimeout!);
-    this.packetStatus[seq].state = "acked";
-    this.packetStatus[seq].retries = 0;
+    this.packetStatus[sequence].state = "acked";
+    this.packetStatus[sequence].retries = 0;
     this.onStatusUpdate(this.packetStatus);
 
     this.waitingForAck = false;
     this.currentPacketIndex++;
 
+    this.updateStats();
+
     if (this.currentPacketIndex >= this.packets.length) {
+      console.log("🎉 Sender: All packets sent successfully!");
       this.onStateUpdate("complete");
       this.onResultUpdate("SUCCESS: File transfer completed");
+      this.updateStatusCanvas("Transfer Complete!");
       this.stop();
     } else {
       this.sendNextPacket();
     }
   }
 
+  private handleNack(sequence: number): void {
+    console.log(`⚠️ Sender: NACK received for packet ${sequence}`);
+    clearTimeout(this.ackTimeout!);
+    this.retryCurrentPacket();
+  }
+
   private startSending(): void {
-    this.isRunning = true;
     this.onStateUpdate("sending");
     this.currentPacketIndex = 0;
+    this.transferStartTime = Date.now();
+    this.updateStatusCanvas("Sending...");
     this.sendNextPacket();
-    this.startAnimation();
   }
 
   private sendNextPacket(): void {
     if (!this.packetStatus[this.currentPacketIndex]) return;
 
-    this.currentFragmentIndex = 0;
-    this.framesSinceLastPacket = 0;
-    this.waitingForAck = true;
+    const packet = this.packets[this.currentPacketIndex];
 
-    this.packetStatus[this.currentPacketIndex].state = "sent";
-    this.onStatusUpdate(this.packetStatus);
+    console.log(
+      `📤 Sender: Sending packet ${this.currentPacketIndex}/${this.packets.length}, size: ${packet.length} bytes`,
+    );
 
-    this.ackTimeout = window.setTimeout(() => this.retryCurrentPacket(), 500);
+    // Log first few bytes for debugging
+    const preview = Array.from(packet.slice(0, 16))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    console.log(`   First 16 bytes: ${preview}`);
+
+    // Log last 8 bytes (includes CRC)
+    const lastBytes = Array.from(packet.slice(-8))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    console.log(`   Last 8 bytes: ${lastBytes}`);
+
+    // CRITICAL FIX: Send the exact slice of the buffer, not the entire underlying ArrayBuffer
+    // The issue is that packet.buffer might be larger than packet.length
+    const exactPacket = packet.slice(); // Creates a new Uint8Array with its own ArrayBuffer
+    const success = this.webrtc.sendData(exactPacket.buffer);
+
+    if (success) {
+      this.waitingForAck = true;
+      this.packetStatus[this.currentPacketIndex].state = "sent";
+      this.onStatusUpdate(this.packetStatus);
+
+      // Update visual status
+      this.updateStatusCanvas(
+        `Sending ${this.currentPacketIndex + 1}/${this.packets.length}`,
+      );
+
+      // Set timeout for ACK
+      this.ackTimeout = window.setTimeout(
+        () => this.retryCurrentPacket(),
+        1000,
+      );
+    } else {
+      console.error("❌ Failed to send packet, retrying...");
+      setTimeout(() => this.sendNextPacket(), 100);
+    }
   }
 
   private retryCurrentPacket(): void {
@@ -216,50 +349,87 @@ export class SenderModule {
       status.state = "failed";
       this.onStateUpdate("error");
       this.onResultUpdate("ERROR: Max retries exceeded");
+      this.updateStatusCanvas("Transfer Failed!");
       this.stop();
       return;
     }
 
+    console.log(
+      `⚠️ Sender: Retrying packet ${this.currentPacketIndex} (retry ${status.retries + 1}/5)`,
+    );
     status.state = "retrying";
     status.retries++;
     this.onStatusUpdate(this.packetStatus);
+
+    this.waitingForAck = false;
+    setTimeout(() => this.sendNextPacket(), 100);
   }
 
-  private startAnimation(): void {
-    const loop = () => {
-      if (!this.isRunning) return;
+  private updateStats(): void {
+    const elapsed = (Date.now() - this.transferStartTime) / 1000;
+    const ackedCount = this.packetStatus.filter(
+      (p) => p.state === "acked",
+    ).length;
+    const bytesTransferred = ackedCount * 128; // Approximate
+    const transferRate = elapsed > 0 ? bytesTransferred / elapsed : 0;
 
-      if (this.waitingForAck) this.sendFrame();
-      this.animationId = requestAnimationFrame(loop);
+    this.onStatsUpdate({
+      packetsSent: this.currentPacketIndex,
+      packetsAcked: ackedCount,
+      bytesTransferred,
+      framesProcessed: 0,
+      transferRate,
+      estimatedTimeRemaining: 0,
+    });
+  }
+
+  private updateStatusCanvas(status: string): void {
+    this.ctx.fillStyle = "#1b1f2a";
+    this.ctx.fillRect(0, 0, 320, 240);
+
+    this.ctx.fillStyle = "#4f7cff";
+    this.ctx.font = "bold 20px Arial";
+    this.ctx.textAlign = "center";
+    this.ctx.fillText("SENDER", 160, 100);
+
+    this.ctx.font = "16px Arial";
+    this.ctx.fillStyle = "#ffffff";
+    this.ctx.fillText(status, 160, 140);
+
+    if (this.file) {
+      this.ctx.font = "12px Arial";
+      this.ctx.fillStyle = "#888888";
+      this.ctx.fillText(this.file.name, 160, 170);
+    }
+  }
+
+  private startStatusAnimation(): void {
+    let frame = 0;
+    const animate = () => {
+      if (!this.animationId) return;
+
+      // Add a subtle animation indicator
+      const dots = ".".repeat(frame % 4);
+      if (this.waitingForAck) {
+        this.updateStatusCanvas(
+          `Sending ${this.currentPacketIndex + 1}/${this.packets.length}${dots}`,
+        );
+      }
+
+      frame++;
+      this.animationId = requestAnimationFrame(animate);
     };
-    loop();
-  }
 
-  private sendFrame(): void {
-    const packet = this.packets[this.currentPacketIndex];
-    if (!packet) return;
-
-    const fragmentSize = Math.ceil(packet.length / this.fragmentsPerPacket);
-    const start = this.currentFragmentIndex * fragmentSize;
-    const fragment = packet.slice(start, start + fragmentSize);
-
-    const img = this.ctx.getImageData(0, 0, 320, 240);
-    const modified = DCTSteganography.embedData(
-      img,
-      fragment,
-      this.currentFragmentIndex,
-    );
-    this.ctx.putImageData(modified, 0, 0);
-
-    this.currentFragmentIndex =
-      (this.currentFragmentIndex + 1) % this.fragmentsPerPacket;
+    this.animationId = requestAnimationFrame(animate);
   }
 
   stop(): void {
-    this.isRunning = false;
-    if (this.animationId) cancelAnimationFrame(this.animationId);
+    if (this.animationId) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = null;
+    }
     if (this.ackTimeout) clearTimeout(this.ackTimeout);
-    this.onStateUpdate("idle");
+    this.waitingForAck = false;
   }
 
   cleanup(): void {
@@ -269,6 +439,7 @@ export class SenderModule {
     this.fileData = null;
     this.isFileReady = false;
     this.fileLoadPromise = null;
+    this.signalingChannel.close();
     this.onFileClear();
   }
 }

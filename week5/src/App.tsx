@@ -26,6 +26,8 @@ function App() {
   const [fileName, setFileName] = useState<string>("");
   const [fileSize, setFileSize] = useState<number>(0);
 
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
   const senderModule = useRef<SenderModule | null>(null);
   const receiverModule = useRef<ReceiverModule | null>(null);
 
@@ -55,6 +57,9 @@ function App() {
             setFileSize(size);
           },
         );
+      }
+      if (selectedFile) {
+        senderModule.current.setFile(selectedFile);
       }
       await senderModule.current.start();
     } else {
@@ -102,7 +107,7 @@ function App() {
       // Reset file input to allow selecting same file again
       event.target.value = "";
 
-      senderModule.current?.setFile(file);
+      setSelectedFile(file);
       setFileName(file.name);
       setFileSize(file.size);
     }
