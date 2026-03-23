@@ -118,7 +118,7 @@ export default function App() {
     if (remoteVideo) {
       remoteVideo.srcObject = remoteReady ? remoteStreamRef.current : null;
       if (remoteReady && remoteStreamRef.current) {
-        remoteVideo.play().catch(() => {});
+        remoteVideo.play().catch(() => { });
       }
     }
 
@@ -173,7 +173,7 @@ export default function App() {
       }
     });
 
-    socket.addEventListener("open", () => {});
+    socket.addEventListener("open", () => { });
     return () => socket.close();
   }, [signaling]);
 
@@ -185,7 +185,7 @@ export default function App() {
     localVideoRef.current = node;
     if (!node || !localStreamRef.current) return;
     node.srcObject = localStreamRef.current;
-    node.play().catch(() => {});
+    node.play().catch(() => { });
   }, []);
 
   const attachRemoteVideo = useCallback((node) => {
@@ -193,7 +193,7 @@ export default function App() {
     if (!node) return;
     node.srcObject = remoteReady ? remoteStreamRef.current : null;
     if (remoteReady && remoteStreamRef.current) {
-      node.play().catch(() => {});
+      node.play().catch(() => { });
     }
   }, [remoteReady]);
 
@@ -201,7 +201,7 @@ export default function App() {
     const localVideo = localVideoRef.current;
     if (!localVideo || !localStreamRef.current) return;
     localVideo.srcObject = localStreamRef.current;
-    localVideo.play().catch(() => {});
+    localVideo.play().catch(() => { });
   }
 
   function setupSenderTransform(sender) {
@@ -322,7 +322,7 @@ export default function App() {
       remoteStreamRef.current = event.streams[0] || null;
       if (remoteVideoRef.current && remoteStreamRef.current) {
         remoteVideoRef.current.srcObject = remoteStreamRef.current;
-        remoteVideoRef.current.play().catch(() => {});
+        remoteVideoRef.current.play().catch(() => { });
       }
       setRemoteReady(Boolean(remoteStreamRef.current));
     };
@@ -554,62 +554,90 @@ export default function App() {
 
   return (
     <div className="page-shell app-shell">
+
+      {/* ── LANDING ─────────────────────────────────────────── */}
       {view === "landing" ? (
         <section className="landing-stage">
           <div className="landing-copy">
             <p className="eyebrow">Peer-to-peer encoded media covert transfer</p>
-            <h1>CipherStream</h1>
+            <h1>Cipher<br />Stream</h1>
+            <p className="hero-text">
+              Embed encrypted messages and files invisibly inside live video —
+              zero metadata, zero trace.
+            </p>
           </div>
           <div className="landing-card">
+            <h3>Enter Session</h3>
             <label>
               Room ID
-              <input value={roomCode} onChange={(event) => setRoomCode(event.target.value)} placeholder="Enter room id" />
+              <input
+                value={roomCode}
+                onChange={(e) => setRoomCode(e.target.value)}
+                placeholder="e.g. room-alpha-7"
+                onKeyDown={(e) => e.key === "Enter" && startCamera()}
+              />
             </label>
-            <button onClick={startCamera}>Join</button>
+            <button onClick={startCamera}>Start Camera →</button>
             <p className="status-line">{status}</p>
           </div>
         </section>
       ) : null}
 
+      {/* ── LOBBY ───────────────────────────────────────────── */}
       {view === "lobby" ? (
         <section className="stage-panel">
           <div className="stage-header">
             <div>
-              <p className="eyebrow">Lobby</p>
-              <h2>Preview Before Joining</h2>
+              <p className="eyebrow">Camera preview</p>
+              <h2>Ready to join?</h2>
             </div>
-            <div className="room-pill">Room {roomCode}</div>
+            <div className="room-pill">{roomCode}</div>
           </div>
           <div className="single-video-wrap">
             <video ref={attachLocalVideo} autoPlay muted playsInline className="video-frame hero-video" />
           </div>
           <div className="lobby-actions">
-            <button onClick={joinCall}>Join Call</button>
+            <button onClick={joinCall}>Join Call →</button>
             <span className="status-line">{status}</span>
           </div>
           <canvas ref={processedCanvasRef} className="hidden-preview" />
         </section>
       ) : null}
 
+      {/* ── CALL ────────────────────────────────────────────── */}
       {view === "call" ? (
         <>
           <section className="stage-panel">
             <div className="stage-header">
               <div>
-                <p className="eyebrow">Live Session</p>
+                <p className="eyebrow">Live session</p>
                 <h2>Secure Call</h2>
               </div>
-              <div className="room-pill">Room {joinedRoom || roomCode}</div>
+              <div className="room-pill">{joinedRoom || roomCode}</div>
             </div>
+
             <div className="call-grid two-up">
+              {/* Local video */}
               <div className="call-card">
-                <div className="panel-header"><h3>You</h3><span>Local preview</span></div>
+                <div className="call-card-header">
+                  <h3>You</h3>
+                  <span>Local — muted</span>
+                </div>
                 <video ref={attachLocalVideo} autoPlay muted playsInline className="video-frame hero-video" />
               </div>
+
+              {/* Remote video */}
               <div className="call-card remote-card">
-                <div className="panel-header"><h3>Remote peer</h3><span>{remoteReady ? "Connected" : "Waiting"}</span></div>
+                <div className="call-card-header">
+                  <h3>Remote peer</h3>
+                  <span className={remoteReady ? "connected-badge" : ""}>
+                    {remoteReady ? "● Connected" : "Waiting…"}
+                  </span>
+                </div>
                 <video ref={attachRemoteVideo} autoPlay playsInline className="video-frame hero-video" />
-                {!remoteReady ? <div className="waiting-overlay">Waiting for the other person to join</div> : null}
+                {!remoteReady ? (
+                  <div className="waiting-overlay">Waiting for remote peer to join</div>
+                ) : null}
               </div>
             </div>
             <canvas ref={processedCanvasRef} className="hidden-preview" />
@@ -618,22 +646,37 @@ export default function App() {
           {showSupportPanels ? (
             <div className="support-stack">
               <div className="support-grid top-grid">
+                {/* Message sender */}
                 <section className="panel">
-                  <div className="panel-header"><h2>Hidden message</h2></div>
-                  <textarea rows="5" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Type your message here" />
-                  <button onClick={sendMessage}>Send message</button>
+                  <div className="panel-header">
+                    <h2>Hidden message</h2>
+                  </div>
+                  <textarea
+                    rows="5"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Type a covert message…"
+                  />
+                  <button onClick={sendMessage}>Embed &amp; send</button>
                 </section>
+
+                {/* File sender */}
                 <section className="panel">
-                  <div className="panel-header"><h2>Hidden file</h2></div>
+                  <div className="panel-header">
+                    <h2>Hidden file</h2>
+                  </div>
                   <label className="file-picker">
-                    <input type="file" onChange={(event) => { const file = event.target.files?.[0]; if (file) sendFile(file); }} />
-                    Select file for transfer
+                    <input
+                      type="file"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) sendFile(f); }}
+                    />
+                    Select file to embed
                   </label>
                   <div className="transfer-list">
                     {outgoingTransfers.map((item) => (
                       <div key={item.transferId} className="transfer-card">
                         <strong>{item.label}</strong>
-                        <span>{item.sentPackets}/{item.totalPackets} packets transmitted</span>
+                        <span>{item.sentPackets} / {item.totalPackets} packets transmitted</span>
                       </div>
                     ))}
                   </div>
@@ -641,41 +684,71 @@ export default function App() {
               </div>
 
               <div className="support-grid bottom-grid">
+                {/* Metrics */}
                 <section className="panel">
-                  <div className="panel-header"><h2>Security and performance</h2><span>Assignment-aligned metrics</span></div>
+                  <div className="panel-header">
+                    <h2>Performance</h2>
+                    <span>Live metrics</span>
+                  </div>
                   <div className="metric-grid">
-                    <div className="metric-card"><strong>{metrics.fps}</strong><span>preview fps</span></div>
-                    <div className="metric-card"><strong>{metrics.latencyMs}</strong><span>extract latency ms</span></div>
-                    <div className="metric-card"><strong>{metrics.payloadOverhead}</strong><span>payload overhead %</span></div>
-                    <div className="metric-card"><strong>{metrics.packetsEmbedded}</strong><span>packets embedded</span></div>
+                    <div className="metric-card">
+                      <strong>{metrics.fps}</strong>
+                      <span>Preview FPS</span>
+                    </div>
+                    <div className="metric-card">
+                      <strong>{metrics.latencyMs}</strong>
+                      <span>Extract latency ms</span>
+                    </div>
+                    <div className="metric-card">
+                      <strong>{metrics.payloadOverhead}</strong>
+                      <span>Payload overhead %</span>
+                    </div>
+                    <div className="metric-card">
+                      <strong>{metrics.packetsEmbedded}</strong>
+                      <span>Packets embedded</span>
+                    </div>
                   </div>
                 </section>
+
+                {/* Received messages */}
                 <section className="panel">
-                  <div className="panel-header"><h2>Recovered messages</h2><span>{receivedMessages.length} complete</span></div>
+                  <div className="panel-header">
+                    <h2>Recovered messages</h2>
+                    <span>{receivedMessages.length} complete</span>
+                  </div>
                   <div className="transfer-list">
-                    {receivedMessages.length === 0 ? <p className="empty">No recovered messages yet.</p> : null}
-                    {receivedMessages.map((item) => (
-                      <div key={item.id} className="transfer-card">
-                        <strong>{item.encrypted ? "Encrypted message" : "Message"}</strong>
-                        <span>{item.text}</span>
-                      </div>
-                    ))}
+                    {receivedMessages.length === 0
+                      ? <p className="empty">No messages recovered yet.</p>
+                      : receivedMessages.map((item) => (
+                        <div key={item.id} className="transfer-card">
+                          <strong>{item.encrypted ? "🔒 Encrypted" : "Message"}</strong>
+                          <span>{item.text}</span>
+                        </div>
+                      ))
+                    }
                   </div>
                 </section>
+
+                {/* Received files */}
                 <section className="panel">
-                  <div className="panel-header"><h2>Recovered files</h2><span>{incomingFiles.length} ready</span></div>
+                  <div className="panel-header">
+                    <h2>Recovered files</h2>
+                    <span>{incomingFiles.length} ready</span>
+                  </div>
                   <div className="transfer-list">
-                    {incomingFiles.length === 0 ? <p className="empty">No recovered files yet.</p> : null}
-                    {incomingFiles.map((item) => (
-                      <div key={item.id} className="transfer-card">
-                        <strong>{item.label}</strong>
-                        <span>{formatBytes(item.size)} | {item.encrypted ? "encrypted" : "plain"}</span>
-                        {item.preview ? (
-                          <img className="preview-image" alt={item.label} src={`data:${item.mimeType};base64,${item.preview}`} />
-                        ) : null}
-                        <a href={item.url} download={item.label}>Download recovered file</a>
-                      </div>
-                    ))}
+                    {incomingFiles.length === 0
+                      ? <p className="empty">No files recovered yet.</p>
+                      : incomingFiles.map((item) => (
+                        <div key={item.id} className="transfer-card">
+                          <strong>{item.label}</strong>
+                          <span>{formatBytes(item.size)} · {item.encrypted ? "encrypted" : "plain"}</span>
+                          {item.preview ? (
+                            <img className="preview-image" alt={item.label} src={`data:${item.mimeType};base64,${item.preview}`} />
+                          ) : null}
+                          <a href={item.url} download={item.label}>↓ Download</a>
+                        </div>
+                      ))
+                    }
                   </div>
                 </section>
               </div>
