@@ -450,6 +450,20 @@ button:active {
 
 .panel { padding: 22px 24px; }
 
+.panel-fixed {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-hidden-file {
+  height: 320px;
+}
+
+.panel-recovered-messages,
+.panel-recovered-files {
+  height: 300px;
+}
+
 .panel-header {
   display: flex;
   align-items: baseline;
@@ -508,6 +522,30 @@ button:active {
   flex-direction: column;
   gap: 8px;
   margin-top: 12px;
+}
+
+.transfer-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.transfer-list-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transfer-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.transfer-list-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+}
+
+.transfer-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.42);
 }
 
 .transfer-card {
@@ -647,3 +685,6 @@ a[download]:hover {
   .landing-copy h1 { font-size: 2.8rem; }
   .bottom-grid { grid-template-columns: 1fr; }
 }
+
+
+

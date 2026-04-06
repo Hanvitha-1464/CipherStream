@@ -895,7 +895,7 @@ export default function App() {
                   <button onClick={sendMessage}>Embed &amp; send</button>
                 </section>
 
-                <section className="panel">
+                <section className="panel panel-fixed panel-hidden-file">
                   <div className="panel-header">
                     <h2>Hidden file</h2>
                   </div>
@@ -909,7 +909,7 @@ export default function App() {
                     />
                     Select file to embed
                   </label>
-                  <div className="transfer-list">
+                  <div className="transfer-list transfer-list-scroll">
                     {outgoingTransfers.map((item) => (
                       <div key={item.transferId} className="transfer-card">
                         <strong>{item.label}</strong>
@@ -946,12 +946,12 @@ export default function App() {
                   </div>
                 </section>
 
-                <section className="panel">
+                <section className="panel panel-fixed panel-recovered-messages">
                   <div className="panel-header">
                     <h2>Recovered messages</h2>
                     <span>{receivedMessages.length} complete</span>
                   </div>
-                  <div className="transfer-list">
+                  <div className="transfer-list transfer-list-scroll">
                     {receivedMessages.length === 0
                       ? <p className="empty">No messages recovered yet.</p>
                       : receivedMessages.map((item) => (
@@ -963,12 +963,12 @@ export default function App() {
                   </div>
                 </section>
 
-                <section className="panel">
+                <section className="panel panel-fixed panel-recovered-files">
                   <div className="panel-header">
                     <h2>Recovered files</h2>
                     <span>{incomingFiles.length} ready</span>
                   </div>
-                  <div className="transfer-list">
+                  <div className="transfer-list transfer-list-scroll">
                     {incomingFiles.length === 0
                       ? <p className="empty">No files recovered yet.</p>
                       : incomingFiles.map((item) => (
@@ -991,3 +991,5 @@ export default function App() {
     </div>
   );
 }
+
+
