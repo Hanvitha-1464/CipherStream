@@ -95,6 +95,7 @@ export default function App() {
   const [joinedRoom, setJoinedRoom] = useState("");
   const [status, setStatus] = useState("");
   const [callActive, setCallActive] = useState(false);
+  const [peerConnected, setPeerConnected] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -369,11 +370,11 @@ export default function App() {
   const attachRemoteVideo = useCallback((node) => {
     remoteVideoRef.current = node;
     if (!node) return;
-    node.srcObject = remoteReady ? remoteStreamRef.current : null;
-    if (remoteReady && remoteStreamRef.current) {
+    node.srcObject = remoteStreamRef.current ?? null;
+    if (remoteStreamRef.current?.getVideoTracks().length) {
       node.play().catch(() => { });
     }
-  }, [remoteReady]);
+  }, []);
 
   function syncLocalVideo() {
     const localVideo = localVideoRef.current;
@@ -385,12 +386,16 @@ export default function App() {
   function syncRemoteVideo() {
     const remoteVideo = remoteVideoRef.current;
     const remoteStream = remoteStreamRef.current;
-    if (!remoteVideo) return;
-    remoteVideo.srcObject = remoteStream && remoteStream.getVideoTracks().length > 0 ? remoteStream : null;
-    if (remoteStream && remoteStream.getVideoTracks().length > 0) {
+    const hasRemoteVideo = Boolean(remoteStream?.getVideoTracks().length);
+    if (!remoteVideo) {
+      setRemoteReady(hasRemoteVideo);
+      return;
+    }
+    remoteVideo.srcObject = remoteStream ?? null;
+    if (hasRemoteVideo) {
       remoteVideo.play().catch(() => { });
     }
-    setRemoteReady(Boolean(remoteStream && remoteStream.getVideoTracks().length > 0));
+    setRemoteReady(hasRemoteVideo);
   }
 
   function closePeerConnection() {
@@ -409,6 +414,7 @@ export default function App() {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
+    setPeerConnected(false);
     setRemoteReady(false);
   }
 
@@ -569,12 +575,14 @@ export default function App() {
       const state = connection.connectionState;
       setStatus(`Peer state: ${state}`);
       setCallActive(state === "connected");
+      setPeerConnected(state === "connected");
       if (["failed", "closed", "disconnected"].includes(state)) {
         remoteStreamRef.current = null;
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = null;
         }
-        setRemoteReady(false);
+        setPeerConnected(false);
+    setRemoteReady(false);
       }
     };
 
@@ -630,6 +638,7 @@ export default function App() {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
+    setPeerConnected(false);
     setRemoteReady(false);
     resetSessionCrypto();
     setView("call");
@@ -638,6 +647,10 @@ export default function App() {
   }
 
   async function sendMessage() {
+    if (!peerConnected) {
+      setStatus("Wait for the remote peer to join before sending hidden data.");
+      return;
+    }
     if (!message.trim()) return;
     const metadata = encodeJson({
       label: "Secret message",
@@ -663,6 +676,10 @@ export default function App() {
   }
 
   async function sendFile(file) {
+    if (!peerConnected) {
+      setStatus("Wait for the remote peer to join before sending hidden data.");
+      return;
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const metadata = encodeJson({
       label: file.name,
@@ -776,6 +793,7 @@ export default function App() {
   }
 
   const showSupportPanels = view === "call";
+  const transfersEnabled = peerConnected;
 
   return (
     <div className="page-shell app-shell">
@@ -803,29 +821,35 @@ export default function App() {
       ) : null}
 
       {view === "lobby" ? (
-        <section className="stage-panel">
-          <div className="stage-header">
-            <div>
-              <p className="eyebrow">Camera preview</p>
-              <h2>Ready to join?</h2>
+        <section className="stage-panel lobby-stage-panel">
+          <div className="lobby-grid">
+            <div className="lobby-preview-panel">
+              <div className="lobby-preview-copy">
+                <p className="eyebrow">Camera preview</p>
+                <h2>Ready to join?</h2>
+              </div>
+              <div className="single-video-wrap lobby-video-wrap">
+                <video
+                  ref={attachLocalVideo}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="video-frame hero-video"
+                />
+              </div>
             </div>
-            <div className="header-actions">
-              <div className="room-pill">{roomCode}</div>
-              <button type="button" className="secondary-button" onClick={goHome}>Back to home</button>
-            </div>
-          </div>
-          <div className="single-video-wrap">
-            <video
-              ref={attachLocalVideo}
-              autoPlay
-              muted
-              playsInline
-              className="video-frame hero-video"
-            />
-          </div>
-          <div className="lobby-actions">
-            <button onClick={joinCall}>Join Call &gt;</button>
-            <span className="status-line">{status}</span>
+
+            <aside className="lobby-side-panel">
+              <div className="lobby-side-copy">
+                <div className="room-pill">{roomCode}</div>
+                <h3>Join this secure room</h3>
+                <span className="status-line">{status}</span>
+              </div>
+              <div className="lobby-actions lobby-actions-stacked">
+                <button onClick={joinCall}>Join Call &gt;</button>
+                <button type="button" className="secondary-button" onClick={goHome}>Back to home</button>
+              </div>
+            </aside>
           </div>
         </section>
       ) : null}
@@ -862,8 +886,8 @@ export default function App() {
               <div className="call-card remote-card">
                 <div className="call-card-header">
                   <h3>Remote peer</h3>
-                  <span className={remoteReady ? "connected-badge" : ""}>
-                    {remoteReady ? "Connected" : "Waiting..."}
+                  <span className={peerConnected ? "connected-badge" : ""}>
+                    {peerConnected ? "Connected" : "Waiting..."}
                   </span>
                 </div>
                 <video
@@ -872,7 +896,7 @@ export default function App() {
                   playsInline
                   className="video-frame hero-video"
                 />
-                {!remoteReady ? (
+                {!peerConnected ? (
                   <div className="waiting-overlay">Waiting for remote peer to join</div>
                 ) : null}
               </div>
@@ -890,18 +914,20 @@ export default function App() {
                     rows="5"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
+                    disabled={!transfersEnabled}
                     placeholder="Type a covert message..."
                   />
-                  <button onClick={sendMessage}>Embed &amp; send</button>
+                  <button onClick={sendMessage} disabled={!transfersEnabled}>Embed &amp; send</button>
                 </section>
 
                 <section className="panel panel-fixed panel-hidden-file">
                   <div className="panel-header">
                     <h2>Hidden file</h2>
                   </div>
-                  <label className="file-picker">
+                  <label className={`file-picker${transfersEnabled ? "" : " is-disabled"}`}>
                     <input
                       type="file"
+                      disabled={!transfersEnabled}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) sendFile(file);
@@ -991,5 +1017,9 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
 
 
