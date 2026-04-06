@@ -20,7 +20,9 @@ import {
   unpackPacket,
 } from "./lib/steganography.js";
 
-const SIGNAL_URL = "http://localhost:3001";
+const SIGNAL_URL =
+  import.meta.env.VITE_SIGNAL_URL
+  || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 const VIDEO_CONSTRAINTS = {
   audio: true,
   video: {
@@ -1017,6 +1019,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
