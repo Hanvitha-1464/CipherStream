@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createKeyPair,
   decodeJson,
   decodeString,
+  deriveSessionKey,
   encodeBlobUrl,
   encodeJson,
   encodeString,
+  exportPublicKey,
+  importPublicKey,
   maybeDecryptBytes,
   maybeEncryptBytes,
 } from "./lib/crypto.js";
@@ -81,6 +85,10 @@ export default function App() {
   const senderTransformsRef = useRef(new WeakSet());
   const receiverTransformsRef = useRef(new WeakSet());
   const nextTransferIdRef = useRef(1);
+  const keyPairRef = useRef(null);
+  const remotePublicKeyRef = useRef(null);
+  const sessionKeyRef = useRef(null);
+  const publicKeySentRef = useRef(false);
 
   const [view, setView] = useState("landing");
   const [roomCode, setRoomCode] = useState("");
@@ -89,7 +97,7 @@ export default function App() {
   const [callActive, setCallActive] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
   const [message, setMessage] = useState("");
-  const [passphrase, setPassphrase] = useState("");
+
   const [receivedMessages, setReceivedMessages] = useState([]);
   const [incomingFiles, setIncomingFiles] = useState([]);
   const [outgoingTransfers, setOutgoingTransfers] = useState([]);
@@ -215,10 +223,15 @@ export default function App() {
     signaling.on("peer-ready", async ({ polite }) => {
       peerReadyRef.current = true;
       politePeerRef.current = polite;
+      await ensureSessionCrypto(codeOrRoom());
       await ensurePeerConnection(polite, codeOrRoom());
     });
 
-    signaling.on("signal", async ({ description, candidate }) => {
+    signaling.on("signal", async ({ description, candidate, publicKey }) => {
+      if (publicKey) {
+        await handleRemotePublicKey(publicKey);
+      }
+
       await ensurePeerConnection(true, codeOrRoom());
       const peer = peerRef.current;
       if (!peer) return;
@@ -256,6 +269,94 @@ export default function App() {
 
   function codeOrRoom() {
     return joinedRoomRef.current || roomCodeRef.current;
+  }
+
+  function resetSessionCrypto() {
+    keyPairRef.current = null;
+    remotePublicKeyRef.current = null;
+    sessionKeyRef.current = null;
+    publicKeySentRef.current = false;
+  }
+
+  async function deriveSessionIfReady() {
+    if (sessionKeyRef.current || !keyPairRef.current || !remotePublicKeyRef.current) {
+      return sessionKeyRef.current;
+    }
+
+    sessionKeyRef.current = await deriveSessionKey(
+      keyPairRef.current.privateKey,
+      remotePublicKeyRef.current,
+    );
+    setStatus("Secure session key established.");
+    flushCompletedTransfers();
+    return sessionKeyRef.current;
+  }
+
+  async function ensureSessionCrypto(targetRoom) {
+    if (!keyPairRef.current) {
+      keyPairRef.current = await createKeyPair();
+    }
+
+    if (!publicKeySentRef.current && targetRoom && keyPairRef.current) {
+      const publicKey = await exportPublicKey(keyPairRef.current.publicKey);
+      signaling.emit("signal", { roomCode: targetRoom, publicKey });
+      publicKeySentRef.current = true;
+    }
+
+    await deriveSessionIfReady();
+  }
+
+  async function handleRemotePublicKey(publicKey) {
+    remotePublicKeyRef.current = await importPublicKey(publicKey);
+    await deriveSessionIfReady();
+  }
+
+  function flushCompletedTransfers() {
+    for (const [transferId, transfer] of transfersRef.current.entries()) {
+      if (transfer.chunks.size === transfer.totalPackets) {
+        void finalizeTransfer(transferId);
+      }
+    }
+  }
+
+  async function finalizeTransfer(transferId) {
+    const transfer = transfersRef.current.get(transferId);
+    if (!transfer) return;
+    if (transfer.encrypted && !sessionKeyRef.current) return;
+    if (transfer.chunks.size !== transfer.totalPackets) return;
+
+    const ordered = Array.from({ length: transfer.totalPackets }, (_, index) => transfer.chunks.get(index));
+    const payload = concatBytes(ordered);
+    const metadata = decodeJson(transfer.metadata);
+    const plainBytes = await maybeDecryptBytes(payload, sessionKeyRef.current, transfer.encrypted);
+
+    if (metadata.kind === "message") {
+      setReceivedMessages((current) => [
+        {
+          id: `${transferId}-${Date.now()}`,
+          text: decodeString(plainBytes),
+          encrypted: transfer.encrypted,
+        },
+        ...current,
+      ]);
+    } else {
+      const blob = new Blob([plainBytes], { type: metadata.mimeType });
+      const url = URL.createObjectURL(blob);
+      setIncomingFiles((current) => [
+        {
+          id: `${transferId}-${Date.now()}`,
+          label: metadata.label,
+          mimeType: metadata.mimeType,
+          size: plainBytes.length,
+          encrypted: transfer.encrypted,
+          url,
+          preview: metadata.mimeType.startsWith("image/") ? encodeBlobUrl(plainBytes) : "",
+        },
+        ...current,
+      ]);
+    }
+
+    transfersRef.current.delete(transferId);
   }
 
   const attachLocalVideo = useCallback((node) => {
@@ -530,6 +631,7 @@ export default function App() {
       remoteVideoRef.current.srcObject = null;
     }
     setRemoteReady(false);
+    resetSessionCrypto();
     setView("call");
     roomCodeRef.current = trimmedRoomCode;
     signaling.emit("join-room", { roomCode: trimmedRoomCode });
@@ -543,7 +645,13 @@ export default function App() {
       kind: "message",
       createdAt: new Date().toISOString(),
     });
-    const encryptedPayload = await maybeEncryptBytes(encodeString(message.trim()), passphrase);
+    const sessionKey = sessionKeyRef.current;
+    if (!sessionKey) {
+      setStatus("Waiting for secure session key exchange.");
+      return;
+    }
+
+    const encryptedPayload = await maybeEncryptBytes(encodeString(message.trim()), sessionKey);
     enqueueTransfer({
       type: 1,
       label: "Message",
@@ -563,7 +671,13 @@ export default function App() {
       size: bytes.length,
       createdAt: new Date().toISOString(),
     });
-    const encryptedPayload = await maybeEncryptBytes(bytes, passphrase);
+    const sessionKey = sessionKeyRef.current;
+    if (!sessionKey) {
+      setStatus("Waiting for secure session key exchange.");
+      return;
+    }
+
+    const encryptedPayload = await maybeEncryptBytes(bytes, sessionKey);
     enqueueTransfer({
       type: 2,
       label: file.name,
@@ -628,7 +742,9 @@ export default function App() {
     const ordered = Array.from({ length: transfer.totalPackets }, (_, index) => transfer.chunks.get(index));
     const payload = concatBytes(ordered);
     const metadata = decodeJson(transfer.metadata);
-    const plainBytes = await maybeDecryptBytes(payload, passphrase, transfer.encrypted);
+    if (transfer.encrypted && !sessionKeyRef.current) return;
+
+    const plainBytes = await maybeDecryptBytes(payload, sessionKeyRef.current, transfer.encrypted);
 
     if (metadata.kind === "message") {
       setReceivedMessages((current) => [
@@ -858,7 +974,7 @@ export default function App() {
                       : incomingFiles.map((item) => (
                         <div key={item.id} className="transfer-card">
                           <strong>{item.label}</strong>
-                          <span>{formatBytes(item.size)} � {item.encrypted ? "encrypted" : "plain"}</span>
+                          <span>{formatBytes(item.size)} | {item.encrypted ? "encrypted" : "plain"}</span>
                           {item.preview ? (
                             <img className="preview-image" alt={item.label} src={`data:${item.mimeType};base64,${item.preview}`} />
                           ) : null}
