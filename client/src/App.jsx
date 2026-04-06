@@ -263,7 +263,7 @@ export default function App() {
       }
     });
 
-    socket.addEventListener("open", () => {});
+    socket.addEventListener("open", () => { });
     return () => socket.close();
   }, [signaling]);
 
@@ -363,7 +363,7 @@ export default function App() {
     localVideoRef.current = node;
     if (!node || !localStreamRef.current) return;
     node.srcObject = localStreamRef.current;
-    node.play().catch(() => {});
+    node.play().catch(() => { });
   }, []);
 
   const attachRemoteVideo = useCallback((node) => {
@@ -371,7 +371,7 @@ export default function App() {
     if (!node) return;
     node.srcObject = remoteReady ? remoteStreamRef.current : null;
     if (remoteReady && remoteStreamRef.current) {
-      node.play().catch(() => {});
+      node.play().catch(() => { });
     }
   }, [remoteReady]);
 
@@ -379,7 +379,7 @@ export default function App() {
     const localVideo = localVideoRef.current;
     if (!localVideo || !localStreamRef.current) return;
     localVideo.srcObject = localStreamRef.current;
-    localVideo.play().catch(() => {});
+    localVideo.play().catch(() => { });
   }
 
   function syncRemoteVideo() {
@@ -388,7 +388,7 @@ export default function App() {
     if (!remoteVideo) return;
     remoteVideo.srcObject = remoteStream && remoteStream.getVideoTracks().length > 0 ? remoteStream : null;
     if (remoteStream && remoteStream.getVideoTracks().length > 0) {
-      remoteVideo.play().catch(() => {});
+      remoteVideo.play().catch(() => { });
     }
     setRemoteReady(Boolean(remoteStream && remoteStream.getVideoTracks().length > 0));
   }
