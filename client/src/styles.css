@@ -118,9 +118,18 @@ body::after {
 .landing-stage {
   display: grid;
   grid-template-columns: 1fr 400px;
-  min-height: 66vh;
+  min-height: 72vh;
   overflow: hidden;
   padding: 0;
+  position: relative;
+}
+
+.landing-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 20% 20%, rgba(11, 191, 173, 0.14), transparent 30%), radial-gradient(circle at 80% 82%, rgba(245, 158, 11, 0.12), transparent 26%);
+  pointer-events: none;
 }
 
 .landing-copy {
@@ -128,27 +137,26 @@ body::after {
   flex-direction: column;
   justify-content: center;
   gap: 28px;
-  padding: 60px 56px;
+  padding: 60px 56px 60px 60px;
   position: relative;
+  z-index: 1;
 }
 
 .landing-copy::after {
-  content: '';
+  content: "";
   position: absolute;
-  right: 0; top: 8%; bottom: 8%;
+  right: 0;
+  top: 8%;
+  bottom: 8%;
   width: 1px;
-  background: linear-gradient(180deg,
-    transparent,
-    rgba(11, 191, 173, 0.35) 25%,
-    rgba(11, 191, 173, 0.35) 75%,
-    transparent);
+  background: linear-gradient(180deg, transparent, rgba(11, 191, 173, 0.35) 25%, rgba(11, 191, 173, 0.35) 75%, transparent);
 }
 
 .eyebrow {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   font-size: 0.68rem;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -157,7 +165,7 @@ body::after {
 }
 
 .eyebrow::before {
-  content: '';
+  content: "";
   display: block;
   width: 24px; height: 2px;
   background: var(--teal);
@@ -169,13 +177,19 @@ body::after {
   font-size: clamp(3.8rem, 6.5vw, 6rem);
   font-weight: 800;
   line-height: 0.88;
-  letter-spacing: -0.04em;
-  background: linear-gradient(135deg, #0f2027 0%, #0bbfad 55%, #38bdf8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  letter-spacing: -0.05em;
+  color: #0f2027;
 }
 
+.landing-copy h1::after {
+  content: "";
+  display: block;
+  width: 110px;
+  height: 8px;
+  margin-top: 18px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--teal), var(--teal-light), transparent);
+}
 .hero-text {
   max-width: 44ch;
   color: var(--text-mid);
@@ -186,10 +200,11 @@ body::after {
 .landing-card {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 22px;
   padding: 52px 40px;
-  background: var(--glass-heavy);
-  border-left: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.78);
+  border-left: 1px solid rgba(11, 191, 173, 0.18);
   position: relative;
   overflow: hidden;
 }
@@ -296,6 +311,31 @@ button:hover {
 
 button:active { transform: translateY(0); }
 
+.secondary-button {
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--text-mid);
+  border: 1.5px solid var(--border-teal);
+  box-shadow: none;
+  min-width: auto;
+  padding: 12px 22px;
+}
+
+.secondary-button:hover {
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 4px 18px rgba(11, 191, 173, 0.16);
+  filter: none;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+
+
 .status-line {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.72rem;
@@ -380,8 +420,7 @@ button:active { transform: translateY(0); }
     rgba(56, 189, 248, 0.08) 100%);
 }
 
-.hero-video { min-height: 260px; }
-.hidden-preview { display: none; }
+.hero-video { min-height: 260px; }
 
 /* ── CALL ─────────────────────────────────────────────────── */
 .call-grid { display: grid; gap: 16px; }

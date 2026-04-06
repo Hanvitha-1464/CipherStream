@@ -64,7 +64,6 @@ function createSignaling(url) {
 
 export default function App() {
   const localVideoRef = useRef(null);
-  const processedCanvasRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const peerRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -72,7 +71,9 @@ export default function App() {
   const queueRef = useRef([]);
   const extractorSeenRef = useRef(new Set());
   const transfersRef = useRef(new Map());
-  const renderLoopRef = useRef(0);
+  const fpsFrameRequestRef = useRef(null);
+  const fpsLastSampleRef = useRef({ presentedFrames: 0, timestamp: 0 });
+  const statsIntervalRef = useRef(null);
   const roomCodeRef = useRef("");
   const joinedRoomRef = useRef("");
   const peerReadyRef = useRef(false);
@@ -104,28 +105,103 @@ export default function App() {
   const signaling = useMemo(() => createSignaling(SIGNAL_URL), []);
 
   useEffect(() => {
-    roomCodeRef.current = roomCode;
-  }, [roomCode]);
-
-  useEffect(() => {
-    joinedRoomRef.current = joinedRoom;
-  }, [joinedRoom]);
-
-  useEffect(() => {
     syncLocalVideo();
-
-    const remoteVideo = remoteVideoRef.current;
-    if (remoteVideo) {
-      remoteVideo.srcObject = remoteReady ? remoteStreamRef.current : null;
-      if (remoteReady && remoteStreamRef.current) {
-        remoteVideo.play().catch(() => { });
-      }
-    }
-
-    if ((view === "lobby" || view === "call") && localStreamRef.current) {
-      startPreviewLoop();
-    }
+    syncRemoteVideo();
   }, [view, remoteReady]);
+
+  useEffect(() => {
+    const video = localVideoRef.current;
+    if (!video || view === "landing") {
+      setMetrics((current) => ({ ...current, fps: 0 }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    fpsLastSampleRef.current = { presentedFrames: 0, timestamp: 0 };
+
+    if (typeof video.requestVideoFrameCallback === "function") {
+      const updateFps = (_, metadata) => {
+        if (cancelled) return;
+        const previous = fpsLastSampleRef.current;
+        if (previous.timestamp > 0 && metadata.mediaTime !== undefined) {
+          const frameDelta = metadata.presentedFrames - previous.presentedFrames;
+          const timeDeltaMs = metadata.expectedDisplayTime - previous.timestamp;
+          if (frameDelta >= 0 && timeDeltaMs > 0) {
+            const fps = Number(((frameDelta * 1000) / timeDeltaMs).toFixed(1));
+            setMetrics((current) => ({ ...current, fps }));
+          }
+        }
+        fpsLastSampleRef.current = {
+          presentedFrames: metadata.presentedFrames,
+          timestamp: metadata.expectedDisplayTime,
+        };
+        fpsFrameRequestRef.current = video.requestVideoFrameCallback(updateFps);
+      };
+
+      fpsFrameRequestRef.current = video.requestVideoFrameCallback(updateFps);
+
+      return () => {
+        cancelled = true;
+        if (fpsFrameRequestRef.current !== null) {
+          video.cancelVideoFrameCallback?.(fpsFrameRequestRef.current);
+          fpsFrameRequestRef.current = null;
+        }
+      };
+    }
+
+    const fallbackFps = Number((localStreamRef.current?.getVideoTracks?.()[0]?.getSettings?.().frameRate || 0).toFixed(1));
+    setMetrics((current) => ({ ...current, fps: fallbackFps }));
+    return undefined;
+  }, [view, callActive]);
+
+  useEffect(() => {
+    if (!callActive || !peerRef.current?.connection) {
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current);
+        statsIntervalRef.current = null;
+      }
+      setMetrics((current) => ({ ...current, latencyMs: 0 }));
+      return undefined;
+    }
+
+    const connection = peerRef.current.connection;
+    const pollStats = async () => {
+      try {
+        const report = await connection.getStats();
+        let latencyMs = 0;
+
+        report.forEach((stat) => {
+          if (latencyMs) return;
+          if (stat.type === "candidate-pair" && stat.state === "succeeded" && stat.currentRoundTripTime != null) {
+            latencyMs = Number((stat.currentRoundTripTime * 1000).toFixed(1));
+          }
+        });
+
+        if (!latencyMs) {
+          report.forEach((stat) => {
+            if (latencyMs) return;
+            if (stat.type === "remote-inbound-rtp" && stat.kind === "video" && stat.roundTripTime != null) {
+              latencyMs = Number((stat.roundTripTime * 1000).toFixed(1));
+            }
+          });
+        }
+
+        setMetrics((current) => ({ ...current, latencyMs }));
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    pollStats();
+    statsIntervalRef.current = setInterval(pollStats, 1000);
+
+    return () => {
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current);
+        statsIntervalRef.current = null;
+      }
+    };
+  }, [callActive]);
 
   useEffect(() => {
     const socket = signaling.connect();
@@ -148,7 +224,8 @@ export default function App() {
       if (!peer) return;
 
       if (description) {
-        const readyForOffer = !peer.makingOffer && (peer.connection.signalingState === "stable" || peer.isSettingRemoteAnswerPending);
+        const readyForOffer = !peer.makingOffer
+          && (peer.connection.signalingState === "stable" || peer.isSettingRemoteAnswerPending);
         const offerCollision = description.type === "offer" && !readyForOffer;
         peer.ignoreOffer = !peer.polite && offerCollision;
         if (peer.ignoreOffer) return;
@@ -173,7 +250,7 @@ export default function App() {
       }
     });
 
-    socket.addEventListener("open", () => { });
+    socket.addEventListener("open", () => {});
     return () => socket.close();
   }, [signaling]);
 
@@ -185,7 +262,7 @@ export default function App() {
     localVideoRef.current = node;
     if (!node || !localStreamRef.current) return;
     node.srcObject = localStreamRef.current;
-    node.play().catch(() => { });
+    node.play().catch(() => {});
   }, []);
 
   const attachRemoteVideo = useCallback((node) => {
@@ -193,7 +270,7 @@ export default function App() {
     if (!node) return;
     node.srcObject = remoteReady ? remoteStreamRef.current : null;
     if (remoteReady && remoteStreamRef.current) {
-      node.play().catch(() => { });
+      node.play().catch(() => {});
     }
   }, [remoteReady]);
 
@@ -201,7 +278,61 @@ export default function App() {
     const localVideo = localVideoRef.current;
     if (!localVideo || !localStreamRef.current) return;
     localVideo.srcObject = localStreamRef.current;
-    localVideo.play().catch(() => { });
+    localVideo.play().catch(() => {});
+  }
+
+  function syncRemoteVideo() {
+    const remoteVideo = remoteVideoRef.current;
+    const remoteStream = remoteStreamRef.current;
+    if (!remoteVideo) return;
+    remoteVideo.srcObject = remoteStream && remoteStream.getVideoTracks().length > 0 ? remoteStream : null;
+    if (remoteStream && remoteStream.getVideoTracks().length > 0) {
+      remoteVideo.play().catch(() => {});
+    }
+    setRemoteReady(Boolean(remoteStream && remoteStream.getVideoTracks().length > 0));
+  }
+
+  function closePeerConnection() {
+    if (!peerRef.current) return;
+    peerRef.current.connection.onicecandidate = null;
+    peerRef.current.connection.onnegotiationneeded = null;
+    peerRef.current.connection.ontrack = null;
+    peerRef.current.connection.onconnectionstatechange = null;
+    peerRef.current.connection.close();
+    peerRef.current = null;
+    setCallActive(false);
+  }
+
+  function resetRemoteStream() {
+    remoteStreamRef.current = null;
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    setRemoteReady(false);
+  }
+
+  function stopLocalCamera() {
+    if (!localStreamRef.current) return;
+    localStreamRef.current.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+  }
+
+  function leaveCall(returnTo = "lobby") {
+    closePeerConnection();
+    resetRemoteStream();
+    setStatus(returnTo === "landing" ? "" : "Call ended.");
+    setView(returnTo);
+  }
+
+  function goHome() {
+    closePeerConnection();
+    resetRemoteStream();
+    stopLocalCamera();
+    setStatus("");
+    setView("landing");
   }
 
   function setupSenderTransform(sender) {
@@ -262,14 +393,12 @@ export default function App() {
     const { readable, writable } = receiver.createEncodedStreams();
     const transform = new TransformStream({
       transform: async (frame, controller) => {
-        const startedAt = performance.now();
         const packet = extractPacketFromEncodedFrame(frame);
         if (packet) {
           await processIncomingPacket(packet);
           setMetrics((current) => ({
             ...current,
             packetsRecovered: current.packetsRecovered + 1,
-            latencyMs: Number((performance.now() - startedAt).toFixed(2)),
           }));
         }
         controller.enqueue(frame);
@@ -315,16 +444,24 @@ export default function App() {
     };
 
     connection.ontrack = (event) => {
+      if (!remoteStreamRef.current) {
+        remoteStreamRef.current = new MediaStream();
+      }
+
+      if (!remoteStreamRef.current.getTracks().some((track) => track.id === event.track.id)) {
+        remoteStreamRef.current.addTrack(event.track);
+      }
+
       if (event.track.kind === "video") {
         setupReceiverTransform(event.receiver);
       }
 
-      remoteStreamRef.current = event.streams[0] || null;
-      if (remoteVideoRef.current && remoteStreamRef.current) {
-        remoteVideoRef.current.srcObject = remoteStreamRef.current;
-        remoteVideoRef.current.play().catch(() => { });
-      }
-      setRemoteReady(Boolean(remoteStreamRef.current));
+      event.track.onended = () => {
+        remoteStreamRef.current?.removeTrack(event.track);
+        syncRemoteVideo();
+      };
+
+      syncRemoteVideo();
     };
 
     connection.onconnectionstatechange = () => {
@@ -340,14 +477,14 @@ export default function App() {
       }
     };
 
-    const videoTrack = localStreamRef.current.getVideoTracks()[0];
-    if (videoTrack) {
-      const sender = connection.addTrack(videoTrack, localStreamRef.current);
+    localStreamRef.current.getVideoTracks().forEach((track) => {
+      const sender = connection.addTrack(track, localStreamRef.current);
       setupSenderTransform(sender);
-    }
-    localStreamRef.current.getAudioTracks().forEach((track) =>
-      connection.addTrack(track, localStreamRef.current),
-    );
+    });
+
+    localStreamRef.current.getAudioTracks().forEach((track) => {
+      connection.addTrack(track, localStreamRef.current);
+    });
 
     peerRef.current = peer;
     return peer;
@@ -374,7 +511,6 @@ export default function App() {
     const stream = await navigator.mediaDevices.getUserMedia(VIDEO_CONSTRAINTS);
     localStreamRef.current = stream;
     syncLocalVideo();
-    startPreviewLoop();
     setStatus("");
   }
 
@@ -465,33 +601,6 @@ export default function App() {
     setMetrics((current) => ({ ...current, queueDepth: queueRef.current.length }));
   }
 
-  function startPreviewLoop() {
-    cancelAnimationFrame(renderLoopRef.current);
-    const canvas = processedCanvasRef.current;
-    const video = localVideoRef.current;
-    if (!canvas || !video) return;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return;
-    let lastFrameAt = performance.now();
-    let smoothedFps = 0;
-
-    const render = () => {
-      if (video?.readyState >= 2) {
-        canvas.width = 1280;
-        canvas.height = 720;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const now = performance.now();
-        const fps = 1000 / Math.max(1, now - lastFrameAt);
-        smoothedFps = smoothedFps === 0 ? fps : smoothedFps * 0.9 + fps * 0.1;
-        lastFrameAt = now;
-        setMetrics((current) => ({ ...current, fps: Number(smoothedFps.toFixed(1)) }));
-      }
-      renderLoopRef.current = requestAnimationFrame(render);
-    };
-
-    renderLoopRef.current = requestAnimationFrame(render);
-  }
-
   async function processIncomingPacket(packetBytes) {
     const packet = unpackPacket(packetBytes);
     if (!packet) return;
@@ -554,17 +663,11 @@ export default function App() {
 
   return (
     <div className="page-shell app-shell">
-
-      {/* ── LANDING ─────────────────────────────────────────── */}
       {view === "landing" ? (
         <section className="landing-stage">
           <div className="landing-copy">
             <p className="eyebrow">Peer-to-peer encoded media covert transfer</p>
             <h1>Cipher<br />Stream</h1>
-            <p className="hero-text">
-              Embed encrypted messages and files invisibly inside live video —
-              zero metadata, zero trace.
-            </p>
           </div>
           <div className="landing-card">
             <h3>Enter Session</h3>
@@ -577,13 +680,12 @@ export default function App() {
                 onKeyDown={(e) => e.key === "Enter" && startCamera()}
               />
             </label>
-            <button onClick={startCamera}>Start Camera →</button>
+            <button onClick={startCamera}>Start Camera &rarr;</button>
             <p className="status-line">{status}</p>
           </div>
         </section>
       ) : null}
 
-      {/* ── LOBBY ───────────────────────────────────────────── */}
       {view === "lobby" ? (
         <section className="stage-panel">
           <div className="stage-header">
@@ -591,20 +693,27 @@ export default function App() {
               <p className="eyebrow">Camera preview</p>
               <h2>Ready to join?</h2>
             </div>
-            <div className="room-pill">{roomCode}</div>
+            <div className="header-actions">
+              <div className="room-pill">{roomCode}</div>
+              <button type="button" className="secondary-button" onClick={goHome}>Back to home</button>
+            </div>
           </div>
           <div className="single-video-wrap">
-            <video ref={attachLocalVideo} autoPlay muted playsInline className="video-frame hero-video" />
+            <video
+              ref={attachLocalVideo}
+              autoPlay
+              muted
+              playsInline
+              className="video-frame hero-video"
+            />
           </div>
           <div className="lobby-actions">
-            <button onClick={joinCall}>Join Call →</button>
+            <button onClick={joinCall}>Join Call &gt;</button>
             <span className="status-line">{status}</span>
           </div>
-          <canvas ref={processedCanvasRef} className="hidden-preview" />
         </section>
       ) : null}
 
-      {/* ── CALL ────────────────────────────────────────────── */}
       {view === "call" ? (
         <>
           <section className="stage-panel">
@@ -613,40 +722,50 @@ export default function App() {
                 <p className="eyebrow">Live session</p>
                 <h2>Secure Call</h2>
               </div>
-              <div className="room-pill">{joinedRoom || roomCode}</div>
+              <div className="header-actions">
+                <div className="room-pill">{joinedRoom || roomCode}</div>
+                <button type="button" className="secondary-button" onClick={() => leaveCall("lobby")}>Leave call</button>
+              </div>
             </div>
 
             <div className="call-grid two-up">
-              {/* Local video */}
               <div className="call-card">
                 <div className="call-card-header">
                   <h3>You</h3>
-                  <span>Local — muted</span>
+                  <span>Local - muted</span>
                 </div>
-                <video ref={attachLocalVideo} autoPlay muted playsInline className="video-frame hero-video" />
+                <video
+                  ref={attachLocalVideo}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="video-frame hero-video"
+                />
               </div>
 
-              {/* Remote video */}
               <div className="call-card remote-card">
                 <div className="call-card-header">
                   <h3>Remote peer</h3>
                   <span className={remoteReady ? "connected-badge" : ""}>
-                    {remoteReady ? "● Connected" : "Waiting…"}
+                    {remoteReady ? "Connected" : "Waiting..."}
                   </span>
                 </div>
-                <video ref={attachRemoteVideo} autoPlay playsInline className="video-frame hero-video" />
+                <video
+                  ref={attachRemoteVideo}
+                  autoPlay
+                  playsInline
+                  className="video-frame hero-video"
+                />
                 {!remoteReady ? (
                   <div className="waiting-overlay">Waiting for remote peer to join</div>
                 ) : null}
               </div>
             </div>
-            <canvas ref={processedCanvasRef} className="hidden-preview" />
           </section>
 
           {showSupportPanels ? (
             <div className="support-stack">
               <div className="support-grid top-grid">
-                {/* Message sender */}
                 <section className="panel">
                   <div className="panel-header">
                     <h2>Hidden message</h2>
@@ -655,12 +774,11 @@ export default function App() {
                     rows="5"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder="Type a covert message…"
+                    placeholder="Type a covert message..."
                   />
                   <button onClick={sendMessage}>Embed &amp; send</button>
                 </section>
 
-                {/* File sender */}
                 <section className="panel">
                   <div className="panel-header">
                     <h2>Hidden file</h2>
@@ -668,7 +786,10 @@ export default function App() {
                   <label className="file-picker">
                     <input
                       type="file"
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) sendFile(f); }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) sendFile(file);
+                      }}
                     />
                     Select file to embed
                   </label>
@@ -684,7 +805,6 @@ export default function App() {
               </div>
 
               <div className="support-grid bottom-grid">
-                {/* Metrics */}
                 <section className="panel">
                   <div className="panel-header">
                     <h2>Performance</h2>
@@ -693,11 +813,11 @@ export default function App() {
                   <div className="metric-grid">
                     <div className="metric-card">
                       <strong>{metrics.fps}</strong>
-                      <span>Preview FPS</span>
+                      <span>Camera FPS</span>
                     </div>
                     <div className="metric-card">
                       <strong>{metrics.latencyMs}</strong>
-                      <span>Extract latency ms</span>
+                      <span>Latency ms</span>
                     </div>
                     <div className="metric-card">
                       <strong>{metrics.payloadOverhead}</strong>
@@ -710,7 +830,6 @@ export default function App() {
                   </div>
                 </section>
 
-                {/* Received messages */}
                 <section className="panel">
                   <div className="panel-header">
                     <h2>Recovered messages</h2>
@@ -721,15 +840,13 @@ export default function App() {
                       ? <p className="empty">No messages recovered yet.</p>
                       : receivedMessages.map((item) => (
                         <div key={item.id} className="transfer-card">
-                          <strong>{item.encrypted ? "🔒 Encrypted" : "Message"}</strong>
+                          <strong>{item.encrypted ? "Encrypted" : "Message"}</strong>
                           <span>{item.text}</span>
                         </div>
-                      ))
-                    }
+                      ))}
                   </div>
                 </section>
 
-                {/* Received files */}
                 <section className="panel">
                   <div className="panel-header">
                     <h2>Recovered files</h2>
@@ -741,14 +858,13 @@ export default function App() {
                       : incomingFiles.map((item) => (
                         <div key={item.id} className="transfer-card">
                           <strong>{item.label}</strong>
-                          <span>{formatBytes(item.size)} · {item.encrypted ? "encrypted" : "plain"}</span>
+                          <span>{formatBytes(item.size)} � {item.encrypted ? "encrypted" : "plain"}</span>
                           {item.preview ? (
                             <img className="preview-image" alt={item.label} src={`data:${item.mimeType};base64,${item.preview}`} />
                           ) : null}
-                          <a href={item.url} download={item.label}>↓ Download</a>
+                          <a href={item.url} download={item.label}>Download</a>
                         </div>
-                      ))
-                    }
+                      ))}
                   </div>
                 </section>
               </div>
