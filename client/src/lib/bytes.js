@@ -9,10 +9,3 @@ export function concatBytes(chunks) {
   return out;
 }
 
-export function bytesToBase64(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 1) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
